@@ -1,25 +1,20 @@
-from fastapi import FastAPI
-from pydantic import BaseModel
-from typing import List
-from langgraph_setup.graph import run_scrum_graph
+from agent.agenticworkflow import ScrumGraphBuilder
 
-app = FastAPI()
+workflow = ScrumGraphBuilder()
+graph = workflow()
 
-class ScrumInput(BaseModel):
-    standups: List[str]
-    retros: List[str]
-    sprint_tasks: List[str]
-    completed_tasks: List[str]
+initial_state = {
+    "project_id": "proj-123",
+    "project_description": "Build an e-commerce analytics dashboard using Firebase and React.",
+    "project_summary": "",
+    "vector_context": [],
+    "dev_profiles": [{"name": "Ali", "tech": "React"}, {"name": "Sara", "tech": "Firebase"}],
+    "tickets": [],
+    "standups": [],
+    "scrum_cycle": 0,
+    "scrum_summary": [],
+    "done": False
+}
 
-@app.post("/run-scrum")
-def run_scrum(input_data: ScrumInput):
-    initial_state = {
-        'standups': input_data.standups,
-        'retros': input_data.retros,
-        'sprint_tasks': input_data.sprint_tasks,
-        'completed_tasks': input_data.completed_tasks,
-        'blockers': [],
-        'suggestions': []
-    }
-    result = run_scrum_graph(initial_state)
-    return {"output": result['suggestions']}
+result = graph.invoke(initial_state)
+print(result)

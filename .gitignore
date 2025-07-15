@@ -1,0 +1,4 @@
+.env
+.env.name
+*.env
+*.env.name
