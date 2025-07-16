@@ -1,11 +1,14 @@
 import os
-import pinecone
-from dotenv import load_dotenv
+from pinecone import Pinecone, ServerlessSpec
 
-load_dotenv()
-
-def init_pinecone(index_name="project_embeddings"):
+def init_pinecone(index_name="projectembeddings"):
     pinecone_api_key = os.getenv("PINECONE_API_KEY")
-    pinecone_env = os.getenv("PINECONE_ENV")
-    pinecone.init(api_key=pinecone_api_key, environment=pinecone_env)
-    return pinecone.Index(index_name)
+    pc = Pinecone(api_key=pinecone_api_key)
+    # Check if index exists, if not create it
+    if index_name not in pc.list_indexes().names():
+        pc.create_index(
+            name=index_name,
+            dimension=384,  # MiniLM dimension
+            metric='cosine'
+        )
+    return pc.Index(index_name)

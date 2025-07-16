@@ -2,3 +2,4 @@
 .env.name
 *.env
 *.env.name
+serviceAccountKey.json
