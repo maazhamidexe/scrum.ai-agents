@@ -1,8 +1,9 @@
-from langchain.text_splitter import MarkdownHeaderTextSplitter
+import re
+from langchain.schema import Document
 
 def split_project_markdown(text: str):
-    splitter = MarkdownHeaderTextSplitter(headers_to_split_on=[
-        ("#", "title"),
-        ("##", "section")
-    ])
-    return splitter.split_text(text)
+    # Split text into sentences using regex
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    # Create a Document for each sentence
+    docs = [Document(page_content=sentence) for sentence in sentences if sentence.strip()]
+    return docs

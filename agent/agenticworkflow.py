@@ -50,8 +50,13 @@ class ScrumGraphBuilder:
         self.llm_with_tools = self.llm.bind_tools(tools=self.tools)
         self.graph = None
 
+    def _log(self, message):
+        now = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        print(f"[SCRUM-WORKFLOW][{now}] {message}")
+
     def store_project_context_node(self, state):
-        """Node 1: Store project description in vector DB and summary in Firestore"""
+        self._log("Entering node: StoreProjectContext")
+        start_time = time.time()
         from agentic.utils.text_splitter import split_project_markdown
         from agentic.utils.embedding import embed_documents
         from agentic.utils.pinecone_client import init_pinecone
@@ -91,10 +96,14 @@ class ScrumGraphBuilder:
         state["vector_stored"] = True
         state["next_node"] = "gather_context"
         
+        self._log(f"Project summary: {summary[:120]}{'...' if len(summary) > 120 else ''}")
+        elapsed = time.time() - start_time
+        self._log(f"Exiting node: StoreProjectContext (took {elapsed:.2f}s)")
         return state
 
     def gather_context_node(self, state):
-        """Node 2: Gather all necessary context for ticket generation"""
+        self._log("Entering node: GatherContext")
+        start_time = time.time()
         project_id = state["project_id"]
         
         # Get developer profiles
@@ -117,10 +126,14 @@ class ScrumGraphBuilder:
         state["context_gathered"] = True
         state["next_node"] = "generate_tickets"
         
+        self._log("Gathering developer profiles, project config, scrum history, and existing tickets")
+        elapsed = time.time() - start_time
+        self._log(f"Exiting node: GatherContext (took {elapsed:.2f}s)")
         return state
 
     def generate_tickets_node(self, state):
-        """Node 3: Use LLM to generate tickets for each developer and store in their dev_profiles subcollection"""
+        self._log("Entering node: GenerateTickets")
+        start_time = time.time()
         project_id = state["project_id"]
         project_description = state["project_description"]
         dev_profiles = state["dev_profiles"]
@@ -204,10 +217,14 @@ class ScrumGraphBuilder:
         state["ticket_assignments"] = ticket_assignments
         state["tickets_created"] = True
         state["next_node"] = "wait_for_standups"
+        self._log(f"Tickets generated: {sum(len(v) for v in ticket_assignments.values())}")
+        elapsed = time.time() - start_time
+        self._log(f"Exiting node: GenerateTickets (took {elapsed:.2f}s)")
         return state
 
     def wait_for_standups_node(self, state):
-        """Node 4: Wait for all developers to submit standups or cycle time to be reached"""
+        self._log("Entering node: WaitForStandups")
+        start_time = time.time()
         project_id = state["project_id"]
         current_cycle = state["scrum_cycle"]
         
@@ -238,46 +255,65 @@ class ScrumGraphBuilder:
         state["timing_info"] = timing_info
         state["standups_ready"] = True
         state["next_node"] = "summarize_standups"
-        
+        self._log(f"Standup status: {standup_status}")
+        self._log(f"Timing info: {timing_info}")
+        elapsed = time.time() - start_time
+        self._log(f"Exiting node: WaitForStandups (took {elapsed:.2f}s)")
         return state
 
     def summarize_standups_node(self, state):
-        """Node 5: Summarize all standups and save to Firebase"""
+        self._log("Entering node: SummarizeStandups")
+        start_time = time.time()
         project_id = state["project_id"]
         current_cycle = state["scrum_cycle"]
-        
-        # Get all standup data for summarization
+
+        # Get all standup data for summarization (current cycle)
         standup_data = get_standup_summary_data.invoke({"project_id": project_id, "cycle_number": current_cycle})
-        
+
+        # Fetch project summary
+        db = get_firestore()
+        project_doc = db.collection("projects").document(project_id).get()
+        project_summary = project_doc.to_dict().get("summary", "") if project_doc.exists else ""
+
+        # Fetch last 5 scrum cycle summaries
+        scrum_history = get_scrum_history.invoke({"project_id": project_id, "limit": 5})
+        scrum_history_str = "\n".join([
+            f"Cycle {c.get('cycle_number', '?')}: {c.get('summary', '')}" for c in scrum_history
+        ]) if scrum_history else "No previous cycles."
+
+        # Fetch all tickets
+        all_tickets = get_project_tickets.invoke({"project_id": project_id})
+        all_tickets_str = "\n".join([
+            f"{t.get('title', '')} (Assigned: {t.get('assigned_dev_id', '')}, Status: {t.get('status', '')})" for t in all_tickets
+        ]) if all_tickets else "No tickets."
+
+        # Fetch all standups (all cycles)
+        all_standups = []
+        standups_collection = db.collection("projects").document(project_id).collection("standups").stream()
+        for doc in standups_collection:
+            all_standups.append(doc.to_dict())
+        all_standups_str = "\n".join([
+            f"Cycle {s.get('cycle', '?')} - {s.get('dev_id', '')}: {s.get('text', s.get('yesterday_work', ''))}" for s in all_standups
+        ]) if all_standups else "No standups."
+
         # Create summarization prompt
         summary_prompt = f"""
-        Summarize the following standup data for scrum cycle {current_cycle}:
-        
-        Standups: {standup_data['standups']}
-        Current Tickets: {standup_data['tickets']}
-        
-        Provide a comprehensive summary including:
-        1. Overall progress made
-        2. Key achievements
-        3. Blockers and issues
-        4. Next steps and priorities
-        5. Team velocity insights
-        """
-        
+Project Summary:\n{project_summary}\n\nScrum History (last 5 cycles):\n{scrum_history_str}\n\nAll Tickets:\n{all_tickets_str}\n\nAll Standups (all cycles):\n{all_standups_str}\n\nCurrent Cycle ({current_cycle}) Standups:\n{standup_data['standups']}\nCurrent Cycle Tickets:\n{standup_data['tickets']}\n\nProvide a comprehensive summary including:\n1. Overall progress made\n2. Key achievements\n3. Blockers and issues\n4. Next steps and priorities\n5. Team velocity insights\n"""
+
         # Generate summary using LLM
         summary_response = self.llm.invoke(summary_prompt)
         summary = summary_response.content
-        
+
         # Get participant list
         participants = [standup.get("dev_id") for standup in standup_data["standups"]]
-        
+
         # Calculate metrics
         metrics = {
             "total_standups": standup_data["total_standups"],
             "cycle_number": current_cycle,
             "completion_rate": len(participants) / len(state["dev_profiles"]) * 100 if state["dev_profiles"] else 0
         }
-        
+
         # Save scrum cycle summary, including ticket_assignments
         save_scrum_cycle_summary.invoke({
             "project_id": project_id,
@@ -287,16 +323,19 @@ class ScrumGraphBuilder:
             "metrics": metrics,
             "ticket_assignments": state.get("ticket_assignments", {})
         })
-        
+
         state["cycle_summary"] = summary
         state["cycle_metrics"] = metrics
         state["summary_saved"] = True
         state["next_node"] = "manage_cycle"
-        
+        self._log(f"Summary generated (first 120 chars): {summary[:120]}{'...' if len(summary) > 120 else ''}")
+        elapsed = time.time() - start_time
+        self._log(f"Exiting node: SummarizeStandups (took {elapsed:.2f}s)")
         return state
 
     def manage_cycle_node(self, state):
-        """Node 6: Manage cycle progression and determine next steps"""
+        self._log("Entering node: ManageCycle")
+        start_time = time.time()
         project_id = state["project_id"]
         current_cycle = state["scrum_cycle"]
         
@@ -316,10 +355,14 @@ class ScrumGraphBuilder:
             # Continue to next cycle
             state["next_node"] = "wait_for_standups"
         
+        self._log("Managing cycle progression and determining next steps")
+        elapsed = time.time() - start_time
+        self._log(f"Exiting node: ManageCycle (took {elapsed:.2f}s)")
         return state
 
     def build_graph(self):
-        """Build the complete scrum workflow graph"""
+        self._log("Initiating ScrumGraphBuilder workflow graph construction")
+        start_time = time.time()
         graph_builder = StateGraph(dict)
 
         # Add all nodes
@@ -352,7 +395,10 @@ class ScrumGraphBuilder:
         graph_builder.add_node("End", lambda x: x)
 
         self.graph = graph_builder.compile()
+        elapsed = time.time() - start_time
+        self._log(f"Workflow graph constructed (took {elapsed:.2f}s)")
         return self.graph
 
     def __call__(self):
+        self._log("ScrumGraphBuilder workflow initiated")
         return self.build_graph()
