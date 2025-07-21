@@ -227,30 +227,15 @@ class ScrumGraphBuilder:
         start_time = time.time()
         project_id = state["project_id"]
         current_cycle = state["scrum_cycle"]
-        
+
         # Set cycle start time if this is the first cycle
         if current_cycle == 0:
             set_cycle_start_time.invoke({"project_id": project_id, "cycle_number": current_cycle})
-        
-        # Wait loop - check for standup completion or time expiration
-        max_wait_time = 300  # 5 minutes for demo purposes
-        wait_interval = 30   # Check every 30 seconds
-        waited_time = 0
-        
-        while waited_time < max_wait_time:
-            # Check standup status
-            standup_status = get_standup_status.invoke({"project_id": project_id, "cycle_number": current_cycle})
-            
-            # Check if time is reached
-            timing_info = get_cycle_timing_info.invoke({"project_id": project_id})
-            
-            # If all standups submitted or time reached, proceed
-            if standup_status["is_complete"] or timing_info["is_time_reached"]:
-                break
-            
-            time.sleep(wait_interval)
-            waited_time += wait_interval
-        
+
+        # DEMO MODE: Do not wait, immediately check standup status and proceed
+        standup_status = get_standup_status.invoke({"project_id": project_id, "cycle_number": current_cycle})
+        timing_info = get_cycle_timing_info.invoke({"project_id": project_id})
+
         state["standup_status"] = standup_status
         state["timing_info"] = timing_info
         state["standups_ready"] = True

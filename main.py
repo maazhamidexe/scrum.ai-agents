@@ -108,7 +108,6 @@ Development Phases:
 7. Polish & deploy
 """
 
-    # --- Run the agentic workflow for the first cycle ---
     workflow = ScrumGraphBuilder()
     graph = workflow()
     initial_state = {
@@ -120,43 +119,29 @@ Development Phases:
 
     print(f"\n🚀 Starting Scrum AI workflow for project: {project_id}")
     print("=" * 60)
-    # Run the workflow up to ticket generation
-    result = graph.invoke(initial_state)
 
-    # --- Simulate standup submissions for cycle 0 ---
-    insert_sample_standups(project_id, 0, dev_profiles)
+    NUM_CYCLES = 3
+    state = initial_state
+    for cycle in range(NUM_CYCLES):
+        print(f"\n----- Starting cycle {cycle} -----")
+        if cycle == 0:
+            # First cycle: start from StoreProjectContext
+            state = graph.invoke(state)
+        else:
+            # Subsequent cycles: skip StoreProjectContext
+            state = graph.invoke({**state, "next_node": "GatherContext"})
+        insert_sample_standups(project_id, cycle, dev_profiles)
+        state = graph.invoke({**state, "done": False})
 
-    # --- Resume the workflow to process standups and generate summary ---
-    # The workflow will sense the standups, summarize, and start a new cycle
-    result = graph.invoke({
-        **result,
-        "done": False  # allow next cycle
-    })
-
-    # --- Print the summary for the first cycle ---
+    # --- Print the summary for each cycle ---
     db = get_firestore()
-    scrum_cycle_doc = db.collection("projects").document(project_id).collection("scrum_cycles").document("cycle_0").get()
-    if scrum_cycle_doc.exists:
-        print("\n📊 Scrum Cycle 0 Summary:")
-        print(scrum_cycle_doc.to_dict().get("summary", "No summary found."))
-    else:
-        print("No scrum cycle 0 summary found.")
-
-    # --- Print tickets for each developer for the next cycle ---
-    print("\n📝 Tickets generated and assigned to developers for next cycle:")
-    dev_profiles_docs = db.collection("projects").document(project_id).collection("dev_profiles").stream()
-    found = False
-    for dev_doc in dev_profiles_docs:
-        dev_id = dev_doc.id
-        tickets_ref = db.collection("projects").document(project_id).collection("dev_profiles").document(dev_id).collection("tickets")
-        tickets = [t.to_dict() for t in tickets_ref.stream()]
-        if tickets:
-            found = True
-            print(f"\nTickets for {dev_doc.to_dict().get('name', dev_id)} ({dev_id}):")
-            for t in tickets:
-                print(f"- {t.get('title')}: {t.get('description')} (Priority: {t.get('priority')}, Est. hours: {t.get('estimated_hours')})")
-    if not found:
-        print("No tickets found.")
+    for cycle in range(NUM_CYCLES):
+        scrum_cycle_doc = db.collection("projects").document(project_id).collection("scrum_cycles").document(f"cycle_{cycle}").get()
+        if scrum_cycle_doc.exists:
+            print(f"\n📊 Scrum Cycle {cycle} Summary:")
+            print(scrum_cycle_doc.to_dict().get("summary", "No summary found."))
+        else:
+            print(f"No scrum cycle {cycle} summary found.")
 
     print("\n✅ Workflow complete.\n")
 
